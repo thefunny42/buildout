@@ -140,6 +140,142 @@ def _execute_permission():
 
 _easy_install_cmd = 'from setuptools.command.easy_install import main; main()'
 
+
+class DistributionCache:
+    """A cache that stores found distribution matching requirements.
+
+    Since there is only 1 distibution matching a given requirement
+    (because of the version constraining), we can associate to a
+    working set to a requirement key.
+    """
+
+    def __init__(self):
+        self._cache = {}
+
+    def _get_cache_key(self, requirement):
+        # Return a cache entry out of a requirement:
+        return (requirement.key, ) + requirement.extras
+
+    def merge(self, set1, set2, solver, normalizer):
+        # Merge and verify two set togethers.
+        problem_requirement, problem_msg = set1.merge(set2)
+        if problem_requirement is None:
+            return
+
+        # There was a problem with a requirement. It can
+        # be because it is more specific than a previous
+        # one. If it is the case, we will trigger a
+        # reinstallation of it, otherwise trigger an error.
+        problem_key = self._get_cache_key(problem_requirement)
+        problem_entry = self._cache.get(problem_key)
+        if (problem_entry is not None and
+            not problem_entry.safe and
+            problem_requirement != problem_entry.requirement and
+            not bool(problem_requirement.specs)):
+            # The requirement have not been normalized (marked as
+            # safe) and is different, reinstall it. Since the
+            # normalizer always return the same result there is only
+            # one solution possible.
+            del self._cache[problem_key]
+            solution_set = self.install(problem_requirement, solver, normalizer)
+            self.merge(set1, solution_set, solver, normalizer)
+            # We merged with the solution, it should now work.
+            self.merge(set1, set2, solver, normalizer)
+
+        raise VersionConflict(problem_msg, set1.working_set)
+
+    def install(self, requirement, solver, normalizer=None):
+        entry_key = self._get_cache_key(requirement)
+        if entry_key in self._cache:
+            return self._cache[entry_key]
+
+        safe = False
+        if normalizer is not None:
+            requirement, safe = normalizer(requirement)
+
+        logger.debug('Getting required %r', str(requirement))
+        # _log_requirement won't work because we work on a sub-set.
+        entry = CacheEntry(requirement, [], safe)
+        for distribution in solver(entry, requirement):
+            entry.working_set.add(distribution)
+
+        # We need to set the cache entry before for dependency loops.
+        self._cache[entry_key] = entry
+
+        while 1:
+            try:
+                entry.working_set.resolve([requirement])
+            except pkg_resources.DistributionNotFound:
+                err = sys.exc_info()[1]
+                missing_requirement = err.args[0]
+                self.merge(
+                    entry,
+                    self.install(missing_requirement, solver, normalizer),
+                    solver, normalizer)
+            else:
+                break
+
+        return entry
+
+
+class CacheSolution:
+    """A solution to requirements that can solved by merging cache entries.
+    """
+
+    def __init__(self, working_set):
+        self.unsafe_requirements = {}
+        self.working_set = working_set
+
+    def merge(self, other):
+        """Extend the set with one other.
+        """
+        for distribution in list(other.working_set):
+            requirements = self.unsafe_requirements.get(distribution.key, None)
+            if requirements is not None:
+                try:
+                    for requirement in requirements:
+                        self.working_set.find(requirement)
+                except pkg_resources.VersionConflict, err:
+                    return requirement, err
+
+        # Everything is safe, merge this set with an another.
+        for distribution in list(other.working_set):
+            self.working_set.add(distribution)
+
+        for key, requirements in other.unsafe_requirements.items():
+            all_requirements = self.unsafe_requirements.get(key, [])
+            all_requirements.extend(requirements)
+            self.unsafe_requirements[key] = all_requirements
+        return None, None
+
+
+class CacheEntry(CacheSolution):
+    """A requirement set remenbers a working set that have been used
+    to solve a given requirement.
+    """
+
+    def __init__(self, requirement, distributions, safe=False):
+        CacheSolution.__init__(self, pkg_resources.WorkingSet([]))
+        self.safe = safe
+        self.requirement = requirement
+
+        self.add(requirement, distributions, safe)
+
+    def add(self, requirement, distributions, safe=False):
+        """Add a specific requirement to the set that might trigger a
+        version conflict error (like > 2.3).
+        """
+        if not safe and bool(requirement.specs):
+            all_requirements = self.unsafe_requirements.get(requirement.key, [])
+            all_requirements.append(requirement)
+            self.unsafe_requirements[requirement.key] = all_requirements
+        for distribution in distributions:
+            self.working_set.add(distribution)
+
+
+distribution_cache = DistributionCache()
+
+
 class Installer:
 
     _versions = {}
@@ -193,6 +329,7 @@ class Installer:
         self._index = _get_index(index, links, self._allow_hosts)
 
         if versions is not None:
+            # XXX We should make a local distribution_cache here
             self._versions = normalize_versions(versions)
 
     def _satisfied(self, req, source=None):
@@ -578,64 +715,38 @@ class Installer:
             requirement = _constrained_requirement(constraint, requirement)
         return requirement
 
+    def _normalize_requirement(self, requirement):
+        constraint = self._versions.get(requirement.project_name.lower())
+        if constraint:
+            return _constrained_requirement(constraint, requirement), True
+        return requirement, False
+
+    def _solve_requirement(self, requiement_set, requirement):
+        return self._get_dist(requirement, requiement_set.working_set)
+
     def install(self, specs, working_set=None):
-
         logger.debug('Installing %s.', repr(specs)[1:-1])
-
-        path = self._path
-        dest = self._dest
-        if dest is not None and dest not in path:
-            path.insert(0, dest)
-
-        requirements = [self._constrain(pkg_resources.Requirement.parse(spec))
-                        for spec in specs]
-
-
 
         if working_set is None:
             ws = pkg_resources.WorkingSet([])
         else:
             ws = working_set
 
-        for requirement in requirements:
-            for dist in self._get_dist(requirement, ws):
-                ws.add(dist)
-                self._maybe_add_distribute(ws, dist)
-
-        # OK, we have the requested distributions and they're in the working
-        # set, but they may have unmet requirements.  We'll simply keep
-        # trying to resolve requirements, adding missing requirements as they
-        # are reported.
-        #
-        # Note that we don't pass in the environment, because we want
-        # to look for new eggs unless what we have is the best that
-        # matches the requirement.
-        while 1:
-            try:
-                ws.resolve(requirements)
-            except pkg_resources.DistributionNotFound:
-                err = sys.exc_info()[1]
-                [requirement] = err.args
-                requirement = self._constrain(requirement)
-                if dest:
-                    logger.debug('Getting required %r', str(requirement))
-                else:
-                    logger.debug('Adding required %r', str(requirement))
-                _log_requirement(ws, requirement)
-
-                for dist in self._get_dist(requirement, ws):
-                    ws.add(dist)
-                    self._maybe_add_distribute(ws, dist)
-            except pkg_resources.VersionConflict:
-                err = sys.exc_info()[1]
-                raise VersionConflict(err, ws)
-            else:
-                break
+        solution = CacheSolution(ws)
+        for spec in specs:
+            requirement = pkg_resources.Requirement.parse(spec)
+            problem_requirement, problem_msg = solution.merge(
+                distribution_cache.install(
+                    requirement,
+                    self._solve_requirement,
+                    self._normalize_requirement))
+            if problem_requirement is not None:
+                # We might be able to recover, but just error for the moment.
+                raise VersionConflict(problem_msg, ws)
 
         return ws
 
     def build(self, spec, build_ext):
-
         requirement = self._constrain(pkg_resources.Requirement.parse(spec))
 
         dist, avail = self._satisfied(requirement, 1)
