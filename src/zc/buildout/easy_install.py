@@ -713,27 +713,6 @@ class Installer:
 
         return dists
 
-    def _maybe_add_setuptools(self, ws, dist):
-        if dist.has_metadata('namespace_packages.txt'):
-            for r in dist.requires():
-                if r.project_name in ('setuptools', 'setuptools'):
-                    break
-            else:
-                # We have a namespace package but no requirement for setuptools
-                if dist.precedence == pkg_resources.DEVELOP_DIST:
-                    logger.warn(
-                        "Develop distribution: %s\n"
-                        "uses namespace packages but the distribution "
-                        "does not require setuptools.",
-                        dist)
-                requirement = self._constrain(
-                    pkg_resources.Requirement.parse('setuptools')
-                    )
-                if ws.find(requirement) is None:
-                    for dist in self._get_dist(requirement, ws):
-                        ws.add(dist)
-
-
     def _constrain(self, requirement):
         constraint = self._versions.get(requirement.project_name.lower())
         if constraint:
@@ -758,6 +737,8 @@ class Installer:
             ws = working_set
 
         solution = CacheSolution(ws)
+        if 'setuptools' not in specs:
+            specs.append('setuptools')
         for spec in specs:
             requirement = pkg_resources.Requirement.parse(spec)
             problem_requirement, problem_msg = solution.merge(
