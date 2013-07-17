@@ -14,7 +14,7 @@
 """Python easy_install API
 
 This module provides a high-level Python API for installing packages.
-It doesn't install scripts.  It uses distribute and requires it to be
+It doesn't install scripts.  It uses setuptools and requires it to be
 installed.
 """
 
@@ -26,6 +26,7 @@ import pkg_resources
 import py_compile
 import re
 import setuptools.archive_util
+import setuptools.command.easy_install
 import setuptools.command.setopt
 import setuptools.package_index
 import shutil
@@ -57,30 +58,49 @@ if is_jython:
     jython_os_name = (java.lang.System.getProperties()['os.name']).lower()
 
 # Make sure we're not being run with an older bootstrap.py that gives us
-# setuptools instead of distribute
+# setuptools instead of setuptools
 has_distribute = pkg_resources.working_set.find(
         pkg_resources.Requirement.parse('distribute')) is not None
 has_setuptools = pkg_resources.working_set.find(
         pkg_resources.Requirement.parse('setuptools')) is not None
-if has_setuptools and not has_distribute:
-    sys.exit("zc.buildout 2 needs distribute, not setuptools."
+if has_distribute and not has_setuptools:
+    sys.exit("zc.buildout 2 needs setuptools, not distribute."
              "  Are you using an outdated bootstrap.py?  Make sure"
              " you have the latest version downloaded from"
              " http://downloads.buildout.org/2/bootstrap.py")
 
-distribute_loc = pkg_resources.working_set.find(
-    pkg_resources.Requirement.parse('distribute')
+setuptools_loc = pkg_resources.working_set.find(
+    pkg_resources.Requirement.parse('setuptools')
     ).location
 
-# Include buildout and distribute eggs in paths
-buildout_and_distribute_path = [
-    distribute_loc,
+# Include buildout and setuptools eggs in paths
+buildout_and_setuptools_path = [
+    setuptools_loc,
     pkg_resources.working_set.find(
         pkg_resources.Requirement.parse('zc.buildout')).location,
     ]
 
 FILE_SCHEME = re.compile('file://', re.I).match
 
+class _Monkey(object):
+    def __init__(self, module, **kw):
+        mdict = self._mdict = module.__dict__
+        self._before = mdict.copy()
+        self._overrides = kw
+
+    def __enter__(self):
+        self._mdict.update(self._overrides)
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self._mdict.clear()
+        self._mdict.update(self._before)
+
+class _NoWarn(object):
+    def warn(self, *args, **kw):
+        pass
+
+_no_warn = _NoWarn()
 
 class AllowHostsPackageIndex(setuptools.package_index.PackageIndex):
     """Will allow urls that are local to the system.
@@ -90,7 +110,12 @@ class AllowHostsPackageIndex(setuptools.package_index.PackageIndex):
     def url_ok(self, url, fatal=False):
         if FILE_SCHEME(url):
             return True
-        return setuptools.package_index.PackageIndex.url_ok(self, url, False)
+        # distutils has its own logging, which can't be hooked / suppressed,
+        # so we monkey-patch the 'log' submodule to suppress the stupid
+        # "Link to <URL> ***BLOCKED*** by --allow-hosts" message.
+        with _Monkey(setuptools.package_index, log=_no_warn):
+            return setuptools.package_index.PackageIndex.url_ok(
+                                                self, url, False)
 
 
 _indexes = {}
@@ -286,7 +311,7 @@ class Installer:
     _prefer_final = True
     _use_dependency_links = True
     _allow_picked_versions = True
-    _store_picked_versions = False
+    _store_required_by = False
 
     def __init__(self,
                  dest=None,
@@ -318,7 +343,7 @@ class Installer:
             links.insert(0, self._download_cache)
 
         self._index_url = index
-        path = (path and path[:] or []) + buildout_and_distribute_path
+        path = (path and path[:] or []) + buildout_and_setuptools_path
         if dest is not None and dest not in path:
             path.insert(0, dest)
         self._path = path
@@ -427,7 +452,7 @@ class Installer:
 
         tmp = tempfile.mkdtemp(dir=dest)
         try:
-            path = distribute_loc
+            path = setuptools_loc
 
             args = [sys.executable, '-c', _easy_install_cmd, '-mZUNxd', tmp]
             level = logger.getEffectiveLevel()
@@ -569,7 +594,7 @@ class Installer:
             and (realpath(new_location) == realpath(dist.location))
             and os.path.isfile(new_location)
             ):
-            # distribute avoids making extra copies, but we want to copy
+            # setuptools avoids making extra copies, but we want to copy
             # to the download cache
             shutil.copy2(new_location, tmp)
             new_location = os.path.join(tmp, os.path.basename(new_location))
@@ -688,21 +713,21 @@ class Installer:
 
         return dists
 
-    def _maybe_add_distribute(self, ws, dist):
+    def _maybe_add_setuptools(self, ws, dist):
         if dist.has_metadata('namespace_packages.txt'):
             for r in dist.requires():
-                if r.project_name in ('setuptools', 'distribute'):
+                if r.project_name in ('setuptools', 'setuptools'):
                     break
             else:
-                # We have a namespace package but no requirement for distribute
+                # We have a namespace package but no requirement for setuptools
                 if dist.precedence == pkg_resources.DEVELOP_DIST:
                     logger.warn(
                         "Develop distribution: %s\n"
                         "uses namespace packages but the distribution "
-                        "does not require distribute.",
+                        "does not require setuptools.",
                         dist)
                 requirement = self._constrain(
-                    pkg_resources.Requirement.parse('distribute')
+                    pkg_resources.Requirement.parse('setuptools')
                     )
                 if ws.find(requirement) is None:
                     for dist in self._get_dist(requirement, ws):
@@ -866,11 +891,16 @@ def allow_picked_versions(setting=None):
         Installer._allow_picked_versions = bool(setting)
     return old
 
-def store_picked_versions(setting=None):
-    old = Installer._store_picked_versions
+def store_required_by(setting=None):
+    old = Installer._store_required_by
     if setting is not None:
-        Installer._store_picked_versions = bool(setting)
+        Installer._store_required_by = bool(setting)
     return old
+
+def get_picked_versions():
+    picked_versions = sorted(Installer._picked_versions.items())
+    required_by = Installer._required_by
+    return (picked_versions, required_by)
 
 
 def install(specs, dest,
@@ -959,7 +989,7 @@ def develop(setup, dest,
         undo.append(lambda: os.close(fd))
 
         os.write(fd, (runsetup_template % dict(
-            distribute=distribute_loc,
+            setuptools=setuptools_loc,
             setupdir=directory,
             setup=setup,
             __file__ = setup,
@@ -1183,22 +1213,30 @@ def _distutils_script(path, dest, script_content, initialization, rsetup):
     if not ('#!' in lines[0]) and ('python' in lines[0]):
         # The script doesn't follow distutil's rules.  Ignore it.
         return []
-    source_encoding_line = ''
-    original_content = ''.join(lines[1:])
-    if (len(lines) > 1) and is_source_encoding_line(lines[1]):
-        # The second line contains a source encoding line. Copy it verbatim.
-        source_encoding_line = lines[1].rstrip()
-        original_content = ''.join(lines[2:])
+    lines = lines[1:]  # Strip off the first hashbang line.
+    line_with_first_import = len(lines)
+    for line_number, line in enumerate(lines):
+        if not 'import' in line:
+            continue
+        if not (line.startswith('import') or line.startswith('from')):
+            continue
+        if '__future__' in line:
+            continue
+        line_with_first_import = line_number
+        break
+
+    before = ''.join(lines[:line_with_first_import])
+    after = ''.join(lines[line_with_first_import:])
 
     python = _safe_arg(sys.executable)
 
     contents = distutils_script_template % dict(
         python = python,
-        source_encoding_line = source_encoding_line,
         path = path,
         initialization = initialization,
         relative_paths_setup = rsetup,
-        original_content = original_content
+        before = before,
+        after = after
         )
     return _create_script(contents, dest)
 
@@ -1215,7 +1253,11 @@ def _create_script(contents, dest):
         if win32_exe.endswith('-script'):
             win32_exe = win32_exe[:-7] # remove "-script"
         win32_exe = win32_exe + '.exe' # add ".exe"
-        new_data = pkg_resources.resource_string('setuptools', 'cli.exe')
+        try:
+            new_data = setuptools.command.easy_install.get_win_launcher('cli')
+        except AttributeError:
+            # fall back for compatibility with older Distribute versions
+            new_data = pkg_resources.resource_string('setuptools', 'cli.exe')
         if (not os.path.exists(win32_exe) or
             (open(win32_exe, 'rb').read() != new_data)
             ):
@@ -1259,9 +1301,8 @@ if __name__ == '__main__':
     sys.exit(%(module_name)s.%(attrs)s(%(arguments)s))
 '''
 
-distutils_script_template = script_header + '''\
-
-%(source_encoding_line)s
+distutils_script_template = script_header + '''
+%(before)s
 %(relative_paths_setup)s
 import sys
 sys.path[0:0] = [
@@ -1269,7 +1310,7 @@ sys.path[0:0] = [
   ]
 %(initialization)s
 
-%(original_content)s'''
+%(after)s'''
 
 
 def _pyscript(path, dest, rsetup, initialization=''):
@@ -1350,7 +1391,7 @@ if _interactive:
 runsetup_template = """
 import sys
 sys.path.insert(0, %(setupdir)r)
-sys.path.insert(0, %(distribute)r)
+sys.path.insert(0, %(setuptools)r)
 
 import os, setuptools
 
@@ -1394,7 +1435,7 @@ class MissingDistribution(zc.buildout.UserError):
 
 def _log_requirement(ws, req):
     if (not logger.isEnabledFor(logging.DEBUG) and
-        not Installer._store_picked_versions):
+        not Installer._store_required_by):
         # Sorting the working set and iterating over it's requirements
         # is expensive, so short circuit the work if it won't even be
         # logged.  When profiling a simple buildout with 10 parts with

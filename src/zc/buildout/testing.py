@@ -46,8 +46,8 @@ print_ = zc.buildout.buildout.print_
 fsync = getattr(os, 'fsync', lambda fileno: None)
 is_win32 = sys.platform == 'win32'
 
-distribute_location = pkg_resources.working_set.find(
-    pkg_resources.Requirement.parse('distribute')).location
+setuptools_location = pkg_resources.working_set.find(
+    pkg_resources.Requirement.parse('setuptools')).location
 
 def cat(dir, *names):
     path = os.path.join(dir, *names)
@@ -61,8 +61,7 @@ def cat(dir, *names):
 def ls(dir, *subs):
     if subs:
         dir = os.path.join(dir, *subs)
-    names = os.listdir(dir)
-    names.sort()
+    names = sorted(os.listdir(dir))
     for name in names:
         if os.path.isdir(os.path.join(dir, name)):
             print_('d ', end=' ')
@@ -143,7 +142,7 @@ def _runsetup(setup, *args):
         os.chdir(os.path.dirname(setup))
         zc.buildout.easy_install.call_subprocess(
             [sys.executable, setup] + args,
-            env=dict(os.environ, PYTHONPATH=distribute_location))
+            env=dict(os.environ, PYTHONPATH=setuptools_location))
         if os.path.exists('build'):
             rmtree('build')
     finally:
@@ -366,8 +365,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         if os.path.isdir(path):
             out = ['<html><body>\n']
-            names = os.listdir(path)
-            names.sort()
+            names = sorted(os.listdir(path))
             for name in names:
                 if os.path.isdir(os.path.join(path, name)):
                     name += '/'
@@ -524,6 +522,10 @@ normalize_exception_type_for_python_2_and_3 = (
     '\2')
 
 not_found = (re.compile(r'Not found: [^\n]+/(\w|\.)+/\r?\n'), '')
+
+# Setuptools now pulls in dependencies when installed.
+adding_find_link = (re.compile(r"Adding find link '[^']+'"
+                               r" from setuptools .*\r?\n"), '')
 
 ignore_not_upgrading = (
     re.compile(

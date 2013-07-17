@@ -18,7 +18,7 @@ buildout software and create a buildout instance:
    script installed in a Python scripts area.
 
 2. Use the buildout bootstrap script to create a buildout that
-   includes both the distribute and zc.buildout eggs.  This allows you
+   includes both the setuptools and zc.buildout eggs.  This allows you
    to use the buildout software without modifying a Python install.
    The buildout script is installed into your buildout local scripts
    area.
@@ -32,7 +32,7 @@ such as a subversion repository, that includes some software source
 directories, buildout configuration files, and a copy of the buildout
 bootstrap script.  To work on the project, one would check out the
 project from the repository and run the bootstrap script which
-installs distribute and zc.buildout into the checkout as well as any
+installs setuptools and zc.buildout into the checkout as well as any
 parts defined.
 
 We have a sample buildout that we created using the bootstrap command
@@ -53,8 +53,8 @@ The bin directory contains scripts.
     -  buildout
 
     >>> ls(sample_buildout, 'eggs')
-    -  distribute-0.6-py2.4.egg
-    -  zc.buildout-1.0-py2.4.egg
+    -  setuptools-0.7-py3.3.egg
+    -  zc.buildout.egg-link
 
 The develop-eggs and parts directories are initially empty:
 
@@ -228,7 +228,7 @@ classes must be exposed as entry points in the zc.buildout group.  we
 give entry points names within the group.
 
 We also need a README.txt for our recipes to avoid an annoying warning
-from distutils, on which distribute and zc.buildout are based:
+from distutils, on which setuptools and zc.buildout are based:
 
     >>> write(sample_buildout, 'recipes', 'README.txt', " ")
 
@@ -1240,8 +1240,8 @@ cygwin
 solaris
   We're running on solaris
 
-macos
-  We're running on Mac OS
+macosx
+  We're running on Mac OS X
 
 posix
   We're running on a POSIX-compatible system
@@ -1286,6 +1286,12 @@ This is illustrated below; first we define a base configuration.
     ... recipe =
     ... option = c1 c2
     ...
+    ... [part4]
+    ... recipe =
+    ... option = d2
+    ...     d3
+    ...     d5
+    ...
     ... """)
 
 Extending this configuration, we can "adjust" the values set in the
@@ -1308,8 +1314,14 @@ base configuration file.
     ... [part3]
     ... option+=c3 c4 c5
     ...
-    ... # normal assignment
+    ... # combining both adding and removing
     ... [part4]
+    ... option += d1
+    ...      d4
+    ... option -= d5
+    ...
+    ... # normal assignment
+    ... [part5]
     ... option = h1 h2
     ...
     ... """)
@@ -1379,7 +1391,7 @@ Verify option values.
     ... """)
 
     >>> print_(system(os.path.join('bin', 'buildout')), end='')
-    ['a1 a2/na3 a4/na5', 'b1 b2 b3 b4', 'c1 c2/nc3 c4 c5', 'h1 h2']
+    ['a1 a2/na3 a4/na5', 'b1 b2 b3 b4', 'c1 c2/nc3 c4 c5', 'd2/nd3/nd1/nd4', 'h1 h2']
     Develop: '/sample-buildout/demo'
 
 Annotated sections output shows which files are responsible for which
@@ -1419,6 +1431,17 @@ operations.
         /sample-buildout/base.cfg
     <BLANKLINE>
     [part4]
+    option= d2
+    d3
+    d1
+    d4
+        /sample-buildout/base.cfg
+    +=  /sample-buildout/extension1.cfg
+    -=  /sample-buildout/extension1.cfg
+    recipe=
+        /sample-buildout/base.cfg
+    <BLANKLINE>
+    [part5]
     option= h1 h2
         /sample-buildout/extension1.cfg
     [versions]
@@ -2482,10 +2505,10 @@ database is shown.
     ... """)
 
     >>> print_(system(buildout+' -vv'), end='') # doctest: +NORMALIZE_WHITESPACE
-    Installing 'zc.buildout', 'distribute'.
+    Installing 'zc.buildout', 'setuptools'.
     We have a develop egg: zc.buildout 1.0.0.
-    We have the best distribution that satisfies 'distribute'.
-    Picked: distribute = 0.6
+    We have the best distribution that satisfies 'setuptools'.
+    Picked: setuptools = 0.7
     <BLANKLINE>
     Configuration data:
     [buildout]
@@ -2572,10 +2595,6 @@ eggs-directory
    this directory across buildouts. Eggs in this directory should
    *never* be modified.  This can be a relative path, which is
    interpreted relative to the directory option.
-
-executable
-   The Python executable used to run the buildout.  See the python
-   option below.
 
 find-links
     You can specify more locations to search for distributions using the
@@ -2676,16 +2695,6 @@ prefer-final
     You will then need to use a false value for prefer-final to get the
     newest releases.
 
-python
-   The name of a section containing information about the default
-   Python interpreter.  Recipes that need a installation
-   typically have options to tell them which Python installation to
-   use.  By convention, if a section-specific option isn't used, the
-   option is looked for in the buildout section.  The option must
-   point to a section with an executable option giving the path to a
-   Python executable.  By default, the buildout section defines the
-   default Python as the Python used to run the buildout.
-
 use-dependency-links
     By default buildout will obey the setuptools dependency_links metadata
     when it looks for dependencies. This behavior can be controlled with
@@ -2707,7 +2716,7 @@ Creating new buildouts and bootstrapping
 ----------------------------------------
 
 If zc.buildout is installed, you can use it to create a new buildout
-with it's own local copies of zc.buildout and distribute and with
+with it's own local copies of zc.buildout and setuptools and with
 local buildout scripts.
 
     >>> sample_bootstrapped = tmpdir('sample-bootstrapped')
@@ -2744,13 +2753,13 @@ We also get other buildout artifacts:
 
     >>> _ = (ls(sample_bootstrapped, 'eggs'),
     ...      ls(sample_bootstrapped, 'develop-eggs'))
-    -  distribute-0.6-py2.3.egg
+    -  setuptools-0.7-py2.3.egg
     -  zc.buildout-1.0-py2.3.egg
 
 (We list both the eggs and develop-eggs directories because the
-buildout or distribute egg could be installed in the develop-eggs
+buildout or setuptools egg could be installed in the develop-eggs
 directory if the original buildout had develop eggs for either
-buildout or distribute.)
+buildout or setuptools.)
 
 Note that the buildout script was installed but not run.  To run
 the buildout, we'd have to run the installed buildout script.

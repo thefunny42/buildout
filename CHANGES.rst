@@ -1,8 +1,27 @@
 Change History
 **************
 
-2.1.1dev (unreleased)
-=====================
+2.2.0 (2013-07-05)
+==================
+
+- Handle both addition and subtraction of elements (+= and -=) on the same key
+  in the same section. Forward-ported from buildout 1.6.
+
+- Suppress the useless ``Link to <URL> ***BLOCKED*** by --allow-hosts``
+  error message being emitted by distribute / setuptools.
+
+- Extend distutils script generation to support module docstrings and
+  __future__ imports.
+
+- Refactored picked versions logic to make it easier to use for plugins.
+
+- Use ``get_win_launcher`` API to find Windows launcher (falling back to
+  ``resource_string`` for ``cli.exe``).
+
+- Remove ``data_files`` from ``setup.py``:  it was installing ``README.txt``
+  in current directory during installation (merged from 1.x branch).
+
+- Switch dependency from ``distribute 0.6.x`` to ``setuptools 0.7.x``.
 
 2.1.0 (2013-03-23)
 ==================

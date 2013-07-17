@@ -56,7 +56,7 @@ def print_(*args, **kw):
 realpath = zc.buildout.easy_install.realpath
 
 pkg_resources_loc = pkg_resources.working_set.find(
-    pkg_resources.Requirement.parse('distribute')).location
+    pkg_resources.Requirement.parse('setuptools')).location
 
 _isurl = re.compile('([a-zA-Z0-9+.-]+)://').match
 
@@ -119,6 +119,24 @@ def _unannotate(data):
     for key in data:
         data[key] = _unannotate_section(data[key])
     return data
+
+
+def _format_picked_versions(picked_versions, required_by):
+    output = ['[versions]']
+    required_output = []
+    for dist_, version in picked_versions:
+        if dist_ in required_by:
+            required_output.append('')
+            required_output.append('# Required by:')
+            for req_ in sorted(required_by[dist_]):
+                required_output.append('# '+req_)
+            target = required_output
+        else:
+            target = output
+        target.append("%s = %s" % (dist_, version))
+    output.extend(required_output)
+    return output
+
 
 _buildout_default_options = _annotate_section({
     'allow-hosts': '*',
@@ -323,8 +341,8 @@ class Buildout(DictMixin):
         self.show_picked_versions = bool_option(options,
                                                 'show-picked-versions')
         self.update_versions_file = options['update-versions-file']
-        zc.buildout.easy_install.store_picked_versions(
-            self.show_picked_versions or self.update_versions_file)
+        zc.buildout.easy_install.store_required_by(self.show_picked_versions or
+                                                   self.update_versions_file)
 
         download_cache = options.get('download-cache')
         if download_cache:
@@ -371,9 +389,9 @@ class Buildout(DictMixin):
 
         self._setup_directories()
 
-        # Now copy buildout and distribute eggs, and record destination eggs:
+        # Now copy buildout and setuptools eggs, and record destination eggs:
         entries = []
-        for name in 'distribute', 'zc.buildout':
+        for name in 'setuptools', 'zc.buildout':
             r = pkg_resources.Requirement.parse(name)
             dist = pkg_resources.working_set.find(r)
             if dist.precedence == pkg_resources.DEVELOP_DIST:
@@ -637,7 +655,8 @@ class Buildout(DictMixin):
         elif (not installed_parts) and installed_exists:
             os.remove(self['buildout']['installed'])
 
-        self._print_picked_versions()
+        if self.show_picked_versions or self.update_versions_file:
+            self._print_picked_versions()
         self._unload_extensions()
 
     def _update_installed(self, **buildout_options):
@@ -871,7 +890,7 @@ class Buildout(DictMixin):
         self._log_level = level
 
     def _maybe_upgrade(self):
-        # See if buildout or distribute need to be upgraded.
+        # See if buildout or setuptools need to be upgraded.
         # If they do, do the upgrade and restart the buildout process.
         __doing__ = 'Checking for upgrades.'
 
@@ -879,7 +898,7 @@ class Buildout(DictMixin):
             return
 
         ws = zc.buildout.easy_install.install(
-            ('zc.buildout', 'distribute'),
+            ('zc.buildout', 'setuptools'),
             self['buildout']['eggs-directory'],
             links = self['buildout'].get('find-links', '').split(),
             index = self['buildout'].get('index'),
@@ -888,7 +907,7 @@ class Buildout(DictMixin):
             )
 
         upgraded = []
-        for project in 'zc.buildout', 'distribute':
+        for project in 'zc.buildout', 'setuptools':
             req = pkg_resources.Requirement.parse(project)
             project_location = pkg_resources.working_set.find(req).location
             if ws.find(req).location != project_location:
@@ -987,24 +1006,13 @@ class Buildout(DictMixin):
                 ep.load()(self)
 
     def _print_picked_versions(self):
-        Installer = zc.buildout.easy_install.Installer
-        if not Installer._picked_versions:
+        picked_versions, required_by = (zc.buildout.easy_install
+                                        .get_picked_versions())
+        if not picked_versions:
             # Don't print empty output.
             return
-        output = ['[versions]']
-        required_output = []
-        for dist_, version in sorted(Installer._picked_versions.items()):
-            if dist_ in Installer._required_by:
-                required_output.append('')
-                required_output.append('# Required by:')
-                for req_ in sorted(Installer._required_by[dist_]):
-                    required_output.append('# '+req_)
-                target = required_output
-            else:
-                target = output
-            target.append("%s = %s" % (dist_, version))
 
-        output.extend(required_output)
+        output = _format_picked_versions(picked_versions, required_by)
 
         if self.show_picked_versions:
             print_("Versions had to be automatically picked.")
@@ -1016,11 +1024,11 @@ class Buildout(DictMixin):
             if os.path.exists(self.update_versions_file):
                 output[:1] = [
                     '',
-                    '# Added by buildout at %s' % datetime.datetime.now(),
-                    ]
+                    '# Added by buildout at %s' % datetime.datetime.now()
+                ]
             output.append('')
             f = open(self.update_versions_file, 'a')
-            f.write('\n'.join(output))
+            f.write(('\n'.join(output)))
             f.close()
             print_("Picked versions have been written to " +
                    self.update_versions_file)
@@ -1041,7 +1049,7 @@ class Buildout(DictMixin):
         fd, tsetup = tempfile.mkstemp()
         try:
             os.write(fd, (zc.buildout.easy_install.runsetup_template % dict(
-                distribute=pkg_resources_loc,
+                setuptools=pkg_resources_loc,
                 setupdir=os.path.dirname(setup),
                 setup=setup,
                 __file__ = setup,
@@ -1614,8 +1622,12 @@ def _dir_hash(dir):
     return dir_hash
 
 def _dists_sig(dists):
+    seen = set()
     result = []
     for dist in dists:
+        if dist in seen:
+            continue
+        seen.add(dist)
         location = dist.location
         if dist.precedence == pkg_resources.DEVELOP_DIST:
             result.append(dist.project_name + '-' + _dir_hash(location))
@@ -1624,19 +1636,26 @@ def _dists_sig(dists):
     return result
 
 def _update_section(s1, s2):
+    # Base section 2 on section 1; section 1 is copied, with key-value pairs
+    # in section 2 overriding those in section 1. If there are += or -=
+    # operators in section 2, process these to add or substract items (delimited
+    # by newlines) from the preexisting values.
     s2 = s2.copy() # avoid mutating the second argument, which is unexpected
-    for k, v in list(s2.items()):
+    # Sort on key, then on the addition or substraction operator (+ comes first)
+    for k, v in sorted(s2.items(), key=lambda x: (x[0].rstrip(' +'), x[0][-1])):
         v2, note2 = v
         if k.endswith('+'):
             key = k.rstrip(' +')
-            v1, note1 = s1.get(key, ("", ""))
+            # Find v1 in s2 first; it may have been defined locally too.
+            v1, note1 = s2.get(key, s1.get(key, ("", "")))
             newnote = ' [+] '.join((note1, note2)).strip()
             s2[key] = "\n".join((v1).split('\n') +
                 v2.split('\n')), newnote
             del s2[k]
         elif k.endswith('-'):
             key = k.rstrip(' -')
-            v1, note1 = s1.get(key, ("", ""))
+            # Find v1 in s2 first; it may have been set by a += operation first
+            v1, note1 = s2.get(key, s1.get(key, ("", "")))
             newnote = ' [-] '.join((note1, note2)).strip()
             s2[key] = ("\n".join(
                 [v for v in v1.split('\n')
@@ -1789,7 +1808,7 @@ Commands:
   bootstrap
 
     Create a new buildout in the current working directory, copying
-    the buildout and distribute eggs and, creating a basic directory
+    the buildout and setuptools eggs and, creating a basic directory
     structure and a buildout-local buildout script.
 
   init
@@ -1800,9 +1819,9 @@ Commands:
 
   setup script [setup command and options]
 
-    Run a given setup script arranging that distribute is in the
+    Run a given setup script arranging that setuptools is in the
     script's path and and that it has been imported so that
-    distribute-provided commands (like bdist_egg) can be used even if
+    setuptools-provided commands (like bdist_egg) can be used even if
     the setup script doesn't import setuptools.
 
     The script can be given either as a script path or a path to a

@@ -12,7 +12,7 @@
 #
 ##############################################################################
 name = "zc.buildout"
-version = "2.1.0"
+version = "2.2.1dev"
 
 import os
 from setuptools import setup
@@ -84,12 +84,12 @@ setup(
     license = "ZPL 2.1",
     keywords = "development build",
     url='http://buildout.org',
-
-    data_files = [('.', ['README.rst'])],
     packages = ['zc', 'zc.buildout'],
     package_dir = {'': 'src'},
     namespace_packages = ['zc'],
-    install_requires = 'setuptools',
+    install_requires = [
+        'setuptools>=0.7',
+    ],
     include_package_data = True,
     entry_points = entry_points,
     extras_require = dict(test=['zope.testing', 'manuel']),
@@ -98,9 +98,10 @@ setup(
        'Intended Audience :: Developers',
        'License :: OSI Approved :: Zope Public License',
        'Programming Language :: Python',
-       'Programming Language :: Python :: 3',
+       'Programming Language :: Python :: 2',
        'Programming Language :: Python :: 2.6',
        'Programming Language :: Python :: 2.7',
+       'Programming Language :: Python :: 3',
        'Programming Language :: Python :: 3.2',
        'Programming Language :: Python :: 3.3',
        'Topic :: Software Development :: Build Tools',

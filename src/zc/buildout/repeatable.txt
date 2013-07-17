@@ -127,10 +127,10 @@ about versions used. If we run the buildout in verbose mode without
 specifying a versions section:
 
     >>> print_(system(buildout+' buildout:versions= -v'), end='')
-    Installing 'zc.buildout', 'distribute'.
+    Installing 'zc.buildout', 'setuptools'.
     We have a develop egg: zc.buildout 1.0.0.
-    We have the best distribution that satisfies 'distribute'.
-    Picked: distribute = 0.6
+    We have the best distribution that satisfies 'setuptools'.
+    Picked: setuptools = 0.6
     Installing 'spam'.
     We have the best distribution that satisfies 'spam'.
     Picked: spam = 2.
@@ -149,10 +149,10 @@ that we can fix them in a versions section.
 If we run the buildout with the versions section:
 
     >>> print_(system(buildout+' -v'), end='')
-    Installing 'zc.buildout', 'distribute'.
+    Installing 'zc.buildout', 'setuptools'.
     We have a develop egg: zc.buildout 1.0.0.
-    We have the best distribution that satisfies 'distribute'.
-    Picked: distribute = 0.6
+    We have the best distribution that satisfies 'setuptools'.
+    Picked: setuptools = 0.6
     Installing 'spam'.
     We have the distribution that satisfies 'spam==1'.
     Uninstalling foo.
@@ -160,7 +160,7 @@ If we run the buildout with the versions section:
     recipe v1
 
 We won't get output for the spam distribution, which we didn't pick,
-but we will get output for distribute, which we didn't specify
+but we will get output for setuptools, which we didn't specify
 versions for.
 
 You can request buildout to generate an error if it picks any
@@ -184,8 +184,8 @@ versions:
     While:
       Installing.
       Checking for upgrades.
-      Getting distribution for 'distribute'.
-    Error: Picked: distribute = 0.6.30
+      Getting distribution for 'setuptools'.
+    Error: Picked: setuptools = 0.6.30
 
 We can name a version something else, if we wish, using the versions option:
 
@@ -236,12 +236,12 @@ Since buildout 2.0, the functionality of the `buildout-versions
 <http://packages.python.org/buildout-versions/>`_ extension is part of
 buildout itself. This makes reporting and managing versions easier.
 
-Buildout picks a version for distribute and for the tests, we need to grab the
+Buildout picks a version for setuptools and for the tests, we need to grab the
 version number:
 
     >>> import pkg_resources
-    >>> req = pkg_resources.Requirement.parse('distribute')
-    >>> distribute_version = pkg_resources.working_set.find(req).version
+    >>> req = pkg_resources.Requirement.parse('setuptools')
+    >>> setuptools_version = pkg_resources.working_set.find(req).version
 
 If you set the ``show-picked-versions`` option, buildout will print
 versions it picked at the end of its run:
@@ -264,7 +264,7 @@ versions it picked at the end of its run:
     Versions had to be automatically picked.
     The following part definition lists the versions picked:
     [versions]
-    distribute = 0.6.99
+    setuptools = 0.6.99
     spam = 2
 
 When everything is pinned, no output is generated:
@@ -277,12 +277,12 @@ When everything is pinned, no output is generated:
     ... show-picked-versions = true
     ...
     ... [versions]
-    ... distribute = %s
+    ... setuptools = %s
     ... spam = 2
     ...
     ... [foo]
     ... recipe = spam
-    ... ''' % (join('recipe', 'dist'), distribute_version))
+    ... ''' % (join('recipe', 'dist'), setuptools_version))
     >>> print_(system(buildout), end='') # doctest: +ELLIPSIS
     Updating foo.
     recipe v2
@@ -301,12 +301,12 @@ and case differences won't impact the pinning:
     ... show-picked-versions = true
     ...
     ... [versions]
-    ... distriBUTE = %s
+    ... setuptools = %s
     ... Spam = 2
     ...
     ... [foo]
     ... recipe = spam
-    ... ''' % (join('recipe', 'dist'), distribute_version))
+    ... ''' % (join('recipe', 'dist'), setuptools_version))
     >>> print_(system(buildout), end='') # doctest: +ELLIPSIS
     Updating foo.
     recipe v2
@@ -318,9 +318,9 @@ extending from that versions file:
     >>> write('my_versions.cfg',
     ... '''
     ... [versions]
-    ... distribute = %s
+    ... setuptools = %s
     ... spam = 2
-    ... ''' % distribute_version)
+    ... ''' % setuptools_version)
     >>> write('buildout.cfg',
     ... '''
     ... [buildout]
@@ -343,8 +343,8 @@ at the end.
     >>> write('my_versions.cfg',
     ... '''
     ... [versions]
-    ... distribute = %s
-    ... ''' % distribute_version)
+    ... setuptools = %s
+    ... ''' % setuptools_version)
     >>> write('buildout.cfg',
     ... '''
     ... [buildout]
@@ -368,8 +368,13 @@ at the end.
 
 The versions file now contains the extra pin:
 
-    >>> 'spam = 2' in open('my_versions.cfg').read()
-    True
+    >>> print_(open('my_versions.cfg').read()) # doctest: +ELLIPSIS
+    <BLANKLINE>
+    ...
+    <BLANKLINE>
+    # Added by buildout at YYYY-MM-DD hh:mm:ss.dddddd
+    spam = 2
+    <BLANKLINE>
 
 And re-running buildout doesn't report any picked versions anymore:
 
@@ -384,8 +389,8 @@ printing them to the console):
     >>> write('my_versions.cfg',
     ... '''
     ... [versions]
-    ... distribute = %s
-    ... ''' % distribute_version)
+    ... setuptools = %s
+    ... ''' % setuptools_version)
     >>> write('buildout.cfg',
     ... '''
     ... [buildout]
@@ -405,8 +410,13 @@ printing them to the console):
 
 The versions file contains the extra pin:
 
-    >>> 'spam = 2' in open('my_versions.cfg').read()
-    True
+    >>> print_(open('my_versions.cfg').read()) # doctest: +ELLIPSIS
+    <BLANKLINE>
+    ...
+    <BLANKLINE>
+    # Added by buildout at YYYY-MM-DD hh:mm:ss.dddddd
+    spam = 2
+    <BLANKLINE>
 
 Because buildout now includes buildout-versions' (and part of the older
 buildout.dumppickedversions') functionality, it warns if these extensions are
