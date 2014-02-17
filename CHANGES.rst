@@ -1,6 +1,29 @@
 Change History
 **************
 
+Unreleased
+==========
+
+- Open files for ``exec()`` in universal newlines mode.  See 
+  https://github.com/buildout/buildout/issues/130
+
+- Add ``BUILDOUT_HOME`` as an alternate way to control how the user default
+  configuration is found.
+
+2.2.1 (2013-09-05)
+==================
+
+- ``distutils`` scripts: correct order of operations on ``from ... import``
+  lines (see https://github.com/buildout/buildout/issues/134).
+
+- Add an ``--allow-site-packges`` option to ``bootstrap.py``, defaulting
+  to False.  If the value is false, strip any "site packages" (as defined by
+  the ``site`` module) from ``sys.path`` before attempting to import
+  ``setuptools`` / ``pkg_resources``.
+
+- Updated the URL used to fetch ``ez_setup.py`` to the official, non-version-
+  pinned version.
+
 2.2.0 (2013-07-05)
 ==================
 
